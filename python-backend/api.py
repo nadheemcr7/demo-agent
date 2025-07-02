@@ -1508,15 +1508,22 @@
 
 
 
+
+
+
+
+
+
 import os
 import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 import uuid
 
+
+
 from dotenv import load_dotenv
 load_dotenv()
-
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -1527,14 +1534,11 @@ from database import db_client
 
 # Import main components
 from main import (
-    triage_agent,
-    schedule_agent,
-    networking_agent,
     conversations,
     get_or_create_conversation,
     load_user_context,
-    relevance_guardrail,
-    jailbreak_guardrail
+    execute_schedule_agent,
+    execute_networking_agent
 )
 
 # Import shared types
@@ -1676,23 +1680,56 @@ async def chat_endpoint(request: ChatRequest):
                 "agent": "User"
             })
             
-            # Simple routing logic based on message content
+            # Improved routing logic based on message content
             message_lower = request.message.lower()
             
-            if any(word in message_lower for word in ['schedule', 'session', 'speaker', 'time', 'room', 'track', 'when', 'agenda', 'program']):
+            # Determine which agent to use with better keyword detection
+            if any(word in message_lower for word in ['schedule', 'session', 'speaker', 'time', 'room', 'track', 'when', 'agenda', 'program', 'july', 'date', 'events', 'september', 'tell me about speaker', 'about speaker']):
                 agent_name = "Schedule Agent"
-                if 'hello' in message_lower or 'hi' in message_lower:
-                    response = f"Hello! I'm the Schedule Agent. I can help you find conference sessions, speakers, and schedule information. What would you like to know about the conference schedule?"
-                else:
-                    response = "I can help you find conference schedule information. You can ask me about:\n\n• **Sessions by speaker** - \"Show me sessions by Alice Wonderland\"\n• **Sessions by topic** - \"Find AI sessions\"\n• **Sessions by room** - \"What's in the Grand Ballroom?\"\n• **Sessions by track** - \"Show me Data Science track\"\n• **Sessions by date** - \"What's happening on July 15th?\"\n\nWhat specific schedule information are you looking for?"
-            elif any(word in message_lower for word in ['network', 'business', 'attendee', 'connect', 'company', 'find people', 'add business', 'register business']):
+                try:
+                    # Convert context to dict for agent execution
+                    context_dict = {
+                        'customer_id': conversation["context"].customer_id,
+                        'passenger_name': conversation["context"].passenger_name,
+                        'account_number': conversation["context"].account_number,
+                        'customer_email': conversation["context"].customer_email,
+                        'is_conference_attendee': conversation["context"].is_conference_attendee,
+                        'conference_name': conversation["context"].conference_name,
+                        'user_company_name': conversation["context"].user_company_name,
+                        'user_location': conversation["context"].user_location,
+                        'user_registration_id': conversation["context"].user_registration_id,
+                        'user_conference_package': conversation["context"].user_conference_package,
+                        'user_primary_stream': conversation["context"].user_primary_stream,
+                        'user_secondary_stream': conversation["context"].user_secondary_stream
+                    }
+                    response = await execute_schedule_agent(request.message, context_dict)
+                except Exception as e:
+                    logger.error(f"Error executing agent {agent_name}: {e}")
+                    response = "I'm having trouble processing your request. Please try again or rephrase your question."
+                    
+            elif any(word in message_lower for word in ['network', 'business', 'attendee', 'connect', 'company', 'find people', 'add business', 'register business', 'show attendees', 'my business', 'tell about', 'tell me about', 'about']):
                 agent_name = "Networking Agent"
-                if 'add' in message_lower and 'business' in message_lower:
-                    response = "DISPLAY_BUSINESS_FORM"
-                elif 'hello' in message_lower or 'hi' in message_lower:
-                    response = f"Hello! I'm the Networking Agent. I can help you connect with other conference attendees and explore business opportunities. What would you like to do?"
-                else:
-                    response = "I can help you with networking and business connections. You can ask me to:\n\n• **Find attendees** - \"Find attendees from Chennai\" or \"Show me all attendees\"\n• **Search businesses** - \"Find healthcare businesses\" or \"Show me IT companies\"\n• **Add your business** - \"I want to add my business\"\n• **Get business info** - \"Show me businesses in Mumbai\"\n\nWhat networking assistance do you need?"
+                try:
+                    # Convert context to dict for agent execution
+                    context_dict = {
+                        'customer_id': conversation["context"].customer_id,
+                        'passenger_name': conversation["context"].passenger_name,
+                        'account_number': conversation["context"].account_number,
+                        'customer_email': conversation["context"].customer_email,
+                        'is_conference_attendee': conversation["context"].is_conference_attendee,
+                        'conference_name': conversation["context"].conference_name,
+                        'user_company_name': conversation["context"].user_company_name,
+                        'user_location': conversation["context"].user_location,
+                        'user_registration_id': conversation["context"].user_registration_id,
+                        'user_conference_package': conversation["context"].user_conference_package,
+                        'user_primary_stream': conversation["context"].user_primary_stream,
+                        'user_secondary_stream': conversation["context"].user_secondary_stream
+                    }
+                    response = await execute_networking_agent(request.message, context_dict)
+                except Exception as e:
+                    logger.error(f"Error executing agent {agent_name}: {e}")
+                    response = "I'm having trouble processing your request. Please try again or rephrase your question."
+                    
             else:
                 agent_name = "Triage Agent"
                 if 'hello' in message_lower or 'hi' in message_lower:
@@ -1741,7 +1778,7 @@ async def chat_endpoint(request: ChatRequest):
                     "description": "Main conference assistant that routes requests",
                     "handoffs": ["Schedule Agent", "Networking Agent"],
                     "tools": [],
-                    "input_guardrails": ["relevance_guardrail", "jailbreak_guardrail"]
+                    "input_guardrails": []
                 },
                 {
                     "name": "Schedule Agent", 

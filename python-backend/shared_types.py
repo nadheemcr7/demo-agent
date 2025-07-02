@@ -63,10 +63,9 @@
 
 
 
-
 # python-backend/shared_types.py
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, validator
+from typing import Optional, List, Dict, Any, Union
 from datetime import date, datetime
 
 # =========================
@@ -83,7 +82,7 @@ class AirlineAgentContext(BaseModel):
     confirmation_number: Optional[str] = None
     seat_number: Optional[str] = None
     flight_number: Optional[str] = None
-    account_number: Optional[str] = None
+    account_number: Optional[Union[str, int]] = None
     customer_id: Optional[str] = None
     booking_id: Optional[str] = None
     flight_id: Optional[str] = None
@@ -105,7 +104,7 @@ class AirlineAgentContext(BaseModel):
     
     # --- Additional User Fields (Missing from original) ---
     user_location: Optional[str] = None
-    user_registration_id: Optional[str] = None
+    user_registration_id: Optional[Union[str, int]] = None
     user_conference_package: Optional[str] = None
     user_primary_stream: Optional[str] = None
     user_secondary_stream: Optional[str] = None
@@ -113,6 +112,13 @@ class AirlineAgentContext(BaseModel):
     # --- Placeholder for future Networking/Business Fields ---
     # last_networking_search_results: List[Dict[str, Any]] = Field(default_factory=list)
     # current_viewed_business_details: Optional[Dict[str, Any]] = None
+
+    @validator('account_number', 'user_registration_id', pre=True)
+    def convert_to_string(cls, v):
+        """Convert numeric values to strings."""
+        if v is not None:
+            return str(v)
+        return v
 
 # =========================
 # GUARDRAIL OUTPUT TYPES
