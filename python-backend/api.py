@@ -20,7 +20,7 @@ from agents import (
     ToolCallItem,
     ToolCallOutputItem,
     InputGuardrailTripwireTriggered,
-    Handoff, # This import is not directly used in the provided snippet's logic, but fine to keep if it's used elsewhere
+    Handoff,
     RunContextWrapper,
     set_tracing_disabled,
     enable_verbose_stdout_logging
@@ -32,15 +32,15 @@ set_tracing_disabled(True)
 # Import ONLY the agents and context available in the current main.py
 from main import (
     triage_agent,
-    schedule_agent, # Schedule agent
-    networking_agent, # Networking agent
+    schedule_agent,
+    networking_agent,
     create_initial_context,
-    load_user_context,  # Updated function name
-    load_customer_context,  # Keep for backward compatibility
-    AirlineAgentContext, # This context class is now imported from shared_types.py into main.py, and can be used here.
+    load_user_context,
+    load_customer_context,
+    AirlineAgentContext,
 )
 
-from database import db_client # Make sure your db_client is correctly set up.
+from database import db_client
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -103,7 +103,6 @@ class CustomerInfoResponse(BaseModel):
     bookings: List[BookingDetails] = []
     current_booking: Optional[Dict[str, Any]] = None
 
-
 class ChatResponse(BaseModel):
     conversation_id: str
     current_agent: str
@@ -137,7 +136,7 @@ class SupabaseConversationStore(ConversationStore):
                 if isinstance(context_data, dict):
                     context_instance = AirlineAgentContext(**context_data)
                 else:
-                    context_instance = create_initial_context() # Fallback
+                    context_instance = create_initial_context()
 
                 state = {
                     "input_items": conversation_data.get("history", []),
@@ -172,13 +171,12 @@ class SupabaseConversationStore(ConversationStore):
 conversation_store = SupabaseConversationStore()
 
 def get_agent_by_name(name: str):
-    # Include all active agents
     agents = {
         triage_agent.name: triage_agent,
         schedule_agent.name: schedule_agent,
         networking_agent.name: networking_agent,
     }
-    return agents.get(name, triage_agent) # Default to triage_agent if name not found
+    return agents.get(name, triage_agent)
 
 def get_guardrail_name(g) -> str:
     name_attr = getattr(g, "name", None)
@@ -193,7 +191,6 @@ def get_guardrail_name(g) -> str:
     return str(g)
 
 def build_agents_list() -> List[Dict[str, Any]]:
-    # Include all active agents
     all_agents = [
         triage_agent,
         schedule_agent,
@@ -223,7 +220,6 @@ def build_agents_list() -> List[Dict[str, Any]]:
 async def get_user(identifier: str):
     """Get user by registration_id or QR code."""
     try:
-        # Try to get user by registration_id first (if numeric), then by QR code
         user_data = None
         if identifier.isdigit():
             user_data = await db_client.get_user_by_registration_id(identifier)
@@ -240,7 +236,6 @@ async def get_user(identifier: str):
         logger.error(f"Error fetching user {identifier}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-# Keep the old customer endpoint for backward compatibility
 @app.get("/customer/{account_number}", response_model=Dict[str, Any])
 async def get_customer(account_number: str):
     try:
@@ -257,7 +252,7 @@ async def get_customer(account_number: str):
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(req: ChatRequest):
     conversation_id: str = req.conversation_id or uuid4().hex
-    current_agent_name: str = triage_agent.name # Default to triage_agent
+    current_agent_name: str = triage_agent.name
     state: Dict[str, Any] = {
         "input_items": [],
         "context": create_initial_context(),
@@ -276,7 +271,6 @@ async def chat_endpoint(req: ChatRequest):
         else:
             conversation_id = uuid4().hex
             if req.account_number:
-                # Use the new load_user_context function
                 state["context"] = await load_user_context(req.account_number)
                 logger.info(f"New conversation {conversation_id}. Loaded user context for identifier: {req.account_number}")
             else:
@@ -300,7 +294,7 @@ async def chat_endpoint(req: ChatRequest):
                         primary_stream=state["context"].user_conference_interests[0] if state["context"].user_conference_interests else None,
                         secondary_stream=state["context"].user_conference_interests[1] if len(state["context"].user_conference_interests) > 1 else None,
                     ),
-                    bookings=[] # No bookings for conference users
+                    bookings=[]
                 )
 
             if not req.message.strip():
@@ -350,7 +344,6 @@ async def chat_endpoint(req: ChatRequest):
                         timestamp=current_time_ms
                     )
                 )
-                # Correctly find the handoff object to call its on_handoff hook
                 ho = next((h for h in getattr(item.source_agent, "handoffs", []) if getattr(h, "agent", None) == item.target_agent), None)
                 if ho and ho.on_handoff:
                     cb_name = getattr(ho.on_handoff, "__name__", repr(ho.on_handoff))
@@ -419,7 +412,7 @@ async def chat_endpoint(req: ChatRequest):
                     id=uuid4().hex,
                     name=get_guardrail_name(g),
                     input=req.message,
-                    reasoning="Passed (no tripwire triggered)", # Assuming success until explicitly failed
+                    reasoning="Passed (no tripwire triggered)",
                     passed=True,
                     timestamp=time.time() * 1000,
                 )
@@ -442,7 +435,7 @@ async def chat_endpoint(req: ChatRequest):
                     primary_stream=state["context"].user_conference_interests[0] if state["context"].user_conference_interests else None,
                     secondary_stream=state["context"].user_conference_interests[1] if len(state["context"].user_conference_interests) > 1 else None,
                 ),
-                bookings=[] # No bookings for conference users
+                bookings=[]
             )
 
         logger.debug(f"Returning ChatResponse for conversation {conversation_id}.")
@@ -464,14 +457,13 @@ async def chat_endpoint(req: ChatRequest):
         gr_timestamp = time.time() * 1000
         
         guardrail_checks = []
-        # Populate guardrail checks based on the active agent's guardrails
         active_agent_for_guardrails = get_agent_by_name(current_agent_name)
         for g in getattr(active_agent_for_guardrails, "input_guardrails", []):
             reasoning = ""
             passed = True
             if get_guardrail_name(g) == failed_guardrail_name:
                 reasoning = getattr(e.guardrail_result, "reasoning", "Guardrail tripped.")
-                if not reasoning: # Ensure reasoning is not empty if it's the tripped guardrail
+                if not reasoning:
                     reasoning = "Guardrail tripped."
                 passed = False
             guardrail_checks.append(
@@ -507,7 +499,7 @@ async def chat_endpoint(req: ChatRequest):
                     primary_stream=state["context"].user_conference_interests[0] if state["context"].user_conference_interests else None,
                     secondary_stream=state["context"].user_conference_interests[1] if len(state["context"].user_conference_interests) > 1 else None,
                 ),
-                bookings=[] # No bookings for conference users
+                bookings=[]
             )
 
         return ChatResponse(

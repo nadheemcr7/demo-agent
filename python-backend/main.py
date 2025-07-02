@@ -27,8 +27,6 @@ from shared_types import AirlineAgentContext, RelevanceOutput, JailbreakOutput
 # CONTEXT
 # =========================
 
-# AirlineAgentContext is now imported from shared_types.py
-
 def create_initial_context() -> AirlineAgentContext:
     """Factory for a new AirlineAgentContext."""
     return AirlineAgentContext()
@@ -130,87 +128,82 @@ async def load_customer_context(account_number: str) -> AirlineAgentContext:
 # =========================
 
 @function_tool(
-    name_override="get_conference_sessions",
-    description_override="Retrieve conference sessions based on speaker, topic, room, track, or date."
+    name_override="get_conference_schedule",
+    description_override="Get conference schedule information by speaker, topic, room, track, or date."
 )
-async def get_conference_sessions(
+async def get_conference_schedule_tool(
     context: RunContextWrapper[AirlineAgentContext],
     speaker_name: Optional[str] = None,
     topic: Optional[str] = None,
     conference_room_name: Optional[str] = None,
     track_name: Optional[str] = None,
-    conference_date: Optional[str] = None,
-    time_range_start: Optional[str] = None,
-    time_range_end: Optional[str] = None
+    conference_date: Optional[str] = None
 ) -> str:
-    """
-    Fetches conference schedule details.
-    Allows filtering by speaker, topic, room, track, date, and time range.
-    Provide the date inYYYY-MM-DD format.
-    Provide times in HH:MM format (24-hour).
-    """
-    query_date: Optional[date] = None
-    if conference_date:
-        try:
-            query_date = date.fromisoformat(conference_date)
-        except ValueError:
-            return "Invalid date format. Please provide the date inYYYY-MM-DD format."
+    """Get conference schedule information based on various filters."""
+    try:
+        # Convert date string to date object if provided
+        parsed_date = None
+        if conference_date:
+            try:
+                parsed_date = datetime.strptime(conference_date, "%Y-%m-%d").date()
+            except ValueError:
+                return f"Invalid date format: {conference_date}. Please use YYYY-MM-DD format."
 
-    query_start_time: Optional[datetime] = None
-    query_end_time: Optional[datetime] = None
-
-    current_date = date.today()
-
-    if time_range_start:
-        try:
-            dt_date = query_date if query_date else current_date
-            query_start_time = datetime.combine(dt_date, datetime.strptime(time_range_start, "%H:%M").time())
-        except ValueError:
-            return "Invalid start time format. Please provide time in HH:MM (24-hour) format."
-    if time_range_end:
-        try:
-            dt_date = query_date if query_date else current_date
-            query_end_time = datetime.combine(dt_date, datetime.strptime(time_range_end, "%H:%M").time())
-        except ValueError:
-            return "Invalid end time format. Please provide time in HH:MM (24-hour) format."
-
-    sessions = await db_client.get_conference_schedule(
-        speaker_name=speaker_name,
-        topic=topic,
-        conference_room_name=conference_room_name,
-        track_name=track_name,
-        conference_date=query_date,
-        time_range_start=query_start_time,
-        time_range_end=query_end_time
-    )
-
-    if not sessions:
-        return "No conference sessions found matching your criteria. Please try a different query."
-    
-    response_lines = ["Here are the conference sessions found:"]
-    for session in sessions:
-        start_t = datetime.fromisoformat(session['start_time']).strftime("%I:%M %p")
-        end_t = datetime.fromisoformat(session['end_time']).strftime("%I:%M %p")
-        conf_date = datetime.fromisoformat(session['conference_date']).strftime("%Y-%m-%d")
-        
-        line = (
-            f"- **{session['topic']}** by {session['speaker_name']} "
-            f"in {session['conference_room_name']} ({session['track_name']} Track) "
-            f"on {conf_date} from {start_t} to {end_t}."
+        # Get schedule from database
+        schedule = await db_client.get_conference_schedule(
+            speaker_name=speaker_name,
+            topic=topic,
+            conference_room_name=conference_room_name,
+            track_name=track_name,
+            conference_date=parsed_date
         )
-        if session.get('description'):
-            line += f" Description: {session['description']}"
-        response_lines.append(line)
-        response_lines.append("") # Add an extra newline for spacing
-    
-    return "\n".join(response_lines)
 
-# Networking Tools
+        if not schedule:
+            filters = []
+            if speaker_name: filters.append(f"speaker '{speaker_name}'")
+            if topic: filters.append(f"topic '{topic}'")
+            if conference_room_name: filters.append(f"room '{conference_room_name}'")
+            if track_name: filters.append(f"track '{track_name}'")
+            if conference_date: filters.append(f"date '{conference_date}'")
+            
+            filter_text = " and ".join(filters) if filters else "your criteria"
+            return f"No conference sessions found for {filter_text}."
+
+        # Format the schedule information
+        result = f"Found {len(schedule)} conference session(s):\n\n"
+        
+        for session in schedule:
+            start_time = session.get('start_time', 'TBD')
+            end_time = session.get('end_time', 'TBD')
+            
+            # Format datetime strings if they exist
+            if isinstance(start_time, str) and 'T' in start_time:
+                start_time = datetime.fromisoformat(start_time.replace('Z', '+00:00')).strftime('%I:%M %p')
+            if isinstance(end_time, str) and 'T' in end_time:
+                end_time = datetime.fromisoformat(end_time.replace('Z', '+00:00')).strftime('%I:%M %p')
+            
+            result += f"**{session.get('topic', 'Unknown Topic')}**\n"
+            result += f"Speaker: {session.get('speaker_name', 'TBD')}\n"
+            result += f"Time: {start_time} - {end_time}\n"
+            result += f"Room: {session.get('conference_room_name', 'TBD')}\n"
+            result += f"Track: {session.get('track_name', 'TBD')}\n"
+            result += f"Date: {session.get('conference_date', 'TBD')}\n"
+            
+            if session.get('description'):
+                result += f"Description: {session.get('description')}\n"
+            
+            result += "\n"
+
+        return result
+
+    except Exception as e:
+        return f"Error retrieving conference schedule: {str(e)}"
+
 @function_tool(
     name_override="search_attendees",
     description_override="Search for conference attendees by name or get all attendees."
 )
-async def search_attendees(
+async def search_attendees_tool(
     context: RunContextWrapper[AirlineAgentContext],
     name: Optional[str] = None,
     limit: int = 10
@@ -259,7 +252,7 @@ async def search_attendees(
     name_override="search_businesses",
     description_override="Search for businesses by company name, sector, or location."
 )
-async def search_businesses(
+async def search_businesses_tool(
     context: RunContextWrapper[AirlineAgentContext],
     query: Optional[str] = None,
     sector: Optional[str] = None,
@@ -314,7 +307,7 @@ async def search_businesses(
     name_override="get_user_businesses",
     description_override="Get all businesses for a specific user."
 )
-async def get_user_businesses(
+async def get_user_businesses_tool(
     context: RunContextWrapper[AirlineAgentContext],
     user_name: Optional[str] = None
 ) -> str:
@@ -370,7 +363,7 @@ async def get_user_businesses(
     name_override="display_business_form",
     description_override="Display a business registration form for the user to fill out."
 )
-async def display_business_form(
+async def display_business_form_tool(
     context: RunContextWrapper[AirlineAgentContext]
 ) -> str:
     """Trigger the UI to show a business registration form."""
@@ -380,7 +373,7 @@ async def display_business_form(
     name_override="add_business",
     description_override="Add a new business for the current user."
 )
-async def add_business(
+async def add_business_tool(
     context: RunContextWrapper[AirlineAgentContext],
     company_name: str,
     industry_sector: str,
@@ -426,23 +419,53 @@ async def add_business(
     except Exception as e:
         return f"Error adding business: {str(e)}"
 
+@function_tool(
+    name_override="get_organization_info",
+    description_override="Get information about an organization."
+)
+async def get_organization_info_tool(
+    context: RunContextWrapper[AirlineAgentContext],
+    organization_id: Optional[str] = None
+) -> str:
+    """Get organization information."""
+    try:
+        # If no organization_id provided, use current user's organization
+        if not organization_id:
+            organization_id = context.context.get('organization_id')
+            if not organization_id:
+                return "No organization specified and no current organization context available."
+
+        organization = await db_client.get_organization_details(organization_id)
+
+        if not organization:
+            return f"No organization found with ID '{organization_id}'."
+
+        # Format organization information
+        result = f"**Organization Information**\n\n"
+        result += f"Name: {organization.get('name', 'Unknown')}\n"
+        
+        details = organization.get('details', {})
+        if details:
+            for key, value in details.items():
+                if value:
+                    result += f"{key.replace('_', ' ').title()}: {value}\n"
+
+        return result
+
+    except Exception as e:
+        return f"Error retrieving organization information: {str(e)}"
+
 # =========================
 # HOOKS (Conference and Networking Hooks)
 # =========================
 
 async def on_schedule_handoff(context: RunContextWrapper[AirlineAgentContext]) -> None:
-    """Proactively greet conference attendees or ask for schedule details."""
-    ctx = context.context
-    if ctx.is_conference_attendee and ctx.conference_name:
-        return f"Welcome to the {ctx.conference_name}! How can I help you with the conference schedule today?"
-    return "I can help you with the conference schedule. What information are you looking for?"
+    """Load user details when handed off to schedule agent."""
+    pass
 
 async def on_networking_handoff(context: RunContextWrapper[AirlineAgentContext]) -> None:
-    """Proactively greet for networking assistance."""
-    ctx = context.context
-    if ctx.is_conference_attendee and ctx.conference_name:
-        return f"Welcome to the networking section! I can help you connect with other attendees, find businesses, or register your own business. What would you like to do?"
-    return "I can help you with networking, finding attendees, and business connections. What are you looking for?"
+    """Load user details when handed off to networking agent."""
+    pass
 
 # =========================
 # GUARDRAILS (Use imported output types)
@@ -467,7 +490,7 @@ guardrail_agent = Agent(
         "If the message is non-conversational, it must be related to the conference to be considered relevant. "
         "Your output must be a JSON object with two fields: 'is_relevant' (boolean) and 'reasoning' (string)."
     ),
-    output_type=RelevanceOutput, # Using imported type
+    output_type=RelevanceOutput,
 )
 
 @input_guardrail(name="Relevance Guardrail")
@@ -491,7 +514,7 @@ jailbreak_guardrail_agent = Agent(
         "Your response must be a JSON object with 'is_safe' (boolean) and 'reasoning' (string)."
         "**Always ensure your JSON output contains both 'is_safe' and 'reasoning' fields.** If there's no specific reasoning, provide an empty string for it."
     ),
-    output_type=JailbreakOutput, # Using imported type
+    output_type=JailbreakOutput,
 )
 
 @input_guardrail(name="Jailbreak Guardrail")
@@ -529,21 +552,20 @@ def schedule_agent_instructions(
         if interests:
             instructions += f"User's business streams: {', '.join(interests)}\n"
     
-    # NEW INSTRUCTION BLOCK FOR ATTENDANCE QUERIES
     instructions += (
         "\n**IMMEDIATE ACTION (Attendance Query):** If the user asks explicitly about their attendance status "
         "(e.g., 'Am I attending?', 'Am I registered?', 'Are you sure I'm attending?', 'Confirm my attendance'), "
         "you MUST respond directly based on the 'is_conference_attendee' flag in your current context:\n"
-        f"- If 'is_conference_attendee' is TRUE: Respond: 'Yes, {attendee_name} are registered as an attendee for the {conference_name}.'\n"
-        f"- If 'is_conference_attendee' is FALSE: Respond: 'No, our records indicate {attendee_name} are not currently registered as an attendee for the {conference_name}.'\n"
+        f"- If 'is_conference_attendee' is TRUE: Respond: 'Yes, {attendee_name}, you are registered as an attendee for the {conference_name}.'\n"
+        f"- If 'is_conference_attendee' is FALSE: Respond: 'No, our records indicate {attendee_name}, you are not currently registered as an attendee for the {conference_name}.'\n"
         "After providing this direct answer, ask if they have other questions about the conference schedule.\n"
     )
 
     instructions += (
-        "\nUse the `get_conference_sessions` tool to find schedule details. **Do not describe tool usage.**\n"
-        "You can search by speaker name, topic, conference room name, track name, or a specific date (YYYY-MM-DD) or time range (HH:MM).\n"
-        "**IMMEDIATE ACTION (General Schedule Query):** If the user asks for a list of all speakers, or a general query like 'who are the speakers' or 'show me the full schedule', you **MUST immediately call `get_conference_sessions` without providing any specific filters.** Do not ask for further clarification for this type of general query. This will retrieve all available conference sessions.\n"
-        "**CRITICAL (Tool Failure with Ambiguity):** If the `get_conference_sessions` tool explicitly returns 'No conference sessions found matching your criteria. Please try a different query.', "
+        "\nUse the `get_conference_schedule` tool to find schedule details. **Do not describe tool usage.**\n"
+        "You can search by speaker name, topic, conference room name, track name, or a specific date (YYYY-MM-DD).\n"
+        "**IMMEDIATE ACTION (General Schedule Query):** If the user asks for a list of all speakers, or a general query like 'who are the speakers' or 'show me the full schedule', you **MUST immediately call `get_conference_schedule` without providing any specific filters.** Do not ask for further clarification for this type of general query. This will retrieve all available conference sessions.\n"
+        "**CRITICAL (Tool Failure with Ambiguity):** If the `get_conference_schedule` tool explicitly returns 'No conference sessions found matching your criteria. Please try a different query.', "
         "you MUST relay that exact message to the user. Additionally, if the user's *original query to you* contained a single, ambiguous term (e.g., just a name like 'John' or a vague term like 'AI'), "
         "you should then ask for clarification: 'I couldn't find sessions for that. Were you looking for a specific speaker, a topic, a room, or a track?' "
         "Do NOT invent reasons why a speaker isn't speaking or suggest other events. Just state the tool's output directly if it indicates no results, and then ask for clarification if the input was unclear.\n"
@@ -564,9 +586,9 @@ schedule_agent = Agent[AirlineAgentContext](
     model="groq/llama3-8b-8192",
     handoff_description="An agent to provide comprehensive information about the conference schedule and all conference-related details.",
     instructions=schedule_agent_instructions,
-    tools=[get_conference_sessions],
+    tools=[get_conference_schedule_tool],
     input_guardrails=[relevance_guardrail, jailbreak_guardrail],
-    handoffs=[], # Will be set after networking_agent is defined
+    handoffs=[],
 )
 
 def networking_agent_instructions(
@@ -596,7 +618,8 @@ def networking_agent_instructions(
         "2. **Business Directory**: Search for businesses by company name, industry sector, or location\n"
         "3. **User Businesses**: Get information about businesses owned by specific attendees\n"
         "4. **Business Registration**: Help users register their own businesses in the directory\n"
-        "5. **Networking Opportunities**: Connect people with similar interests or complementary businesses\n\n"
+        "5. **Networking Opportunities**: Connect people with similar interests or complementary businesses\n"
+        "6. **Organization Information**: Provide details about organizations\n\n"
         
         "**CRITICAL BUSINESS REGISTRATION FLOW:**\n"
         "- When a user wants to add/register a new business, asks about 'adding business details', 'register my business', 'add my company', or similar requests, you MUST use the `display_business_form` tool immediately\n"
@@ -609,7 +632,8 @@ def networking_agent_instructions(
         "- `search_businesses`: Search businesses by company name, sector, or location\n"
         "- `get_user_businesses`: Get businesses owned by a specific user\n"
         "- `display_business_form`: Show interactive business registration form (use for new business registration)\n"
-        "- `add_business`: Add business to directory (called automatically after form submission)\n\n"
+        "- `add_business`: Add business to directory (called automatically after form submission)\n"
+        "- `get_organization_info`: Get organization details\n\n"
         
         "**Do not describe tool usage in your responses.**\n"
         "If the user asks about conference schedule or sessions, transfer them to the Schedule Agent.\n"
@@ -623,14 +647,15 @@ networking_agent = Agent[AirlineAgentContext](
     handoff_description="An agent to help with networking, finding attendees, business connections, and business registration.",
     instructions=networking_agent_instructions,
     tools=[
-        search_attendees,
-        search_businesses,
-        get_user_businesses,
-        display_business_form,
-        add_business
+        search_attendees_tool,
+        search_businesses_tool,
+        get_user_businesses_tool,
+        display_business_form_tool,
+        add_business_tool,
+        get_organization_info_tool
     ],
     input_guardrails=[relevance_guardrail, jailbreak_guardrail],
-    handoffs=[], # Will be set after triage_agent is defined
+    handoffs=[],
 )
 
 triage_agent = Agent[AirlineAgentContext](
@@ -654,7 +679,8 @@ triage_agent = Agent[AirlineAgentContext](
         "   - Searching for businesses or business directory\n"
         "   - Adding/registering new business details\n"
         "   - Business connections and professional networking\n"
-        "   - Questions about companies or business information\n\n"
+        "   - Questions about companies or business information\n"
+        "   - Organization information\n\n"
         
         "**IMMEDIATE ROUTING:**\n"
         "- For conference schedule/session queries → call `transfer_to_schedule_agent()`\n"
